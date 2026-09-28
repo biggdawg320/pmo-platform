@@ -64,6 +64,14 @@ Usage:
   # non-zero if the mirror has no usable write path at all:
   python3 native-dep-mirror.py --verify-write-surface
 
+  # Parse-only entry point for OTHER predicates that need the same body-dep
+  # grammar (e.g. Stage-2 A6.5 (1b) Orphaned-dependencies / (2a) P1-blocked-by-
+  # lower in stage-02-triage.md): read an issue body on stdin, print each
+  # FS+0d blocked-by target issue number on its own line (no network; empty
+  # output = none). Callers should use this instead of re-deriving the grammar
+  # in shell regex, per the one-way body→native mirror model this module owns:
+  gh issue view N --json body --jq '.body' | python3 native-dep-mirror.py --print-blocked-by-targets
+
 Exit codes:
   0 — mirror completed (or dry-run plan produced) with no add failures
   1 — one or more native add operations failed on an EDGE-level cause (dep cap,
@@ -458,6 +466,18 @@ def parse_body_dependencies(body: str) -> List[BodyDep]:
 def mirror_eligible_targets(deps: List[BodyDep]) -> Set[int]:
     """The FS+0d target subset — the only edges that mirror to native."""
     return {d.target for d in deps if d.is_mirror_eligible}
+
+
+def print_blocked_by_targets(body: str) -> None:
+    """Print each FS+0d blocked-by target from `body`, one per line (CLI entry).
+
+    The parse-only entry point for callers outside this module (Stage-2 A6.5
+    predicates (1b)/(2a)) that need the exact body-Dependencies grammar this
+    module implements, so they share it instead of re-deriving it — see
+    `--print-blocked-by-targets` in the module docstring.
+    """
+    for target in sorted(mirror_eligible_targets(parse_body_dependencies(body))):
+        print(target)
 
 
 def compute_mirror_plan(
@@ -1172,6 +1192,10 @@ def main() -> int:
                         help="Run deterministic fixtures (no network)")
     parser.add_argument("--verify-write-surface", action="store_true",
                         help="Introspect the write surface and exit; writes nothing")
+    parser.add_argument("--print-blocked-by-targets", action="store_true",
+                        help="Read an issue body from stdin; print each FS+0d "
+                             "blocked-by target issue number on its own line "
+                             "(pure parse, no network) — see module docstring")
     args = parser.parse_args()
 
     if args.self_test:
@@ -1179,6 +1203,10 @@ def main() -> int:
 
     if args.verify_write_surface:
         return verify_write_surface()
+
+    if args.print_blocked_by_targets:
+        print_blocked_by_targets(sys.stdin.read())
+        return 0
 
     if not args.issue and not args.milestone:
         print("ERROR: provide --issue N or --milestone TITLE (or --self-test)",
